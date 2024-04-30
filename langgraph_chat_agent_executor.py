@@ -16,6 +16,8 @@ from langchain_core.messages import BaseMessage
 from langgraph.prebuilt import ToolInvocation
 from langchain_core.messages import FunctionMessage
 import json
+from langgraph.graph import StateGraph, END
+from langchain_core.messages import HumanMessage
 
 secrets = "/Users/suryaganesan/Documents/GitHub/Replicate/secrets.toml"
 github_secrets = "secrets.toml"
@@ -35,7 +37,7 @@ tool_exec = ToolExecutor(tools)
 
 #Setup model
 
-model = ChatOpenAI(model="gpt-3.5-turbo", temperature=0.7, streaming=True)
+model = ChatOpenAI(model="gpt-4", temperature=0.7, streaming=True)
 
 functions = [format_tool_to_openai_function(t) for t in tools]
 model = model.bind_functions(functions)
@@ -67,14 +69,45 @@ def call_tool(state):
     messages = state["messages"]
     last_message = messages[-1]
     action = ToolInvocation(
-        tool = last_message.additional_kwargs["function"]["name"],
+        tool = last_message.additional_kwargs["function_call"]["name"],
         tool_input = json.loads(
-            last_message.additional_kwargs["function"]["arguments"]
-            )
+            last_message.additional_kwargs["function_call"]["arguments"]
+            ),
     )
 
     response = tool_exec.invoke(action)
     function_message = FunctionMessage(content=str(response), name=action.tool)
-    return {"messages": function_message}
+    return {"messages": [function_message]}
 
     
+# Define Graph
+
+workflow = StateGraph(AgentState)
+
+workflow.add_node("agent", call_model)
+workflow.add_node("action", call_tool)
+
+workflow.set_entry_point("agent")
+
+workflow.add_conditional_edges(
+    "agent",
+    should_continue,
+    {
+        "continue": "action",
+        "end": END
+    },
+)
+
+workflow.add_edge("action", END)
+
+app = workflow.compile()
+
+# Using it!
+
+print("no error till here ------")
+
+
+msg = {"messages": [HumanMessage(content="Search oto find out what was the last IPL match that happened in Indian cricket")]}
+response = app.invoke(msg)
+
+print(response)
